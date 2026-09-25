@@ -20,24 +20,67 @@ if command -v jetbackup5 &> /dev/null; then
         echo "License: Valid"
         JB_VALID=true
         
-        # Query JetBackup 5 API for the latest backup entry
         if command -v jetbackup5api &> /dev/null; then
-            BACKUP_INFO=$(jetbackup5api -F listBackups -D "sort[created]=-1&limit=1" 2>/dev/null)
-            
-            LAST_JB_DATE=$(echo "$BACKUP_INFO" | grep -i '"created"' | head -n 1 | awk -F '"' '{print $4}')
-            JOB_NAME=$(echo "$BACKUP_INFO" | grep -i '"job_name"' | head -n 1 | awk -F '"' '{print $4}')
-            
-            # Fallback if job_name field isn't nested under 'job_name'
-            if [[ -z "$JOB_NAME" ]]; then
-                JOB_NAME=$(echo "$BACKUP_INFO" | grep -i '"name"' | head -n 1 | awk -F '"' '{print $4}')
-            fi
+            python3 - << 'EOF' 2>/dev/null
+import subprocess
 
-            if [[ -n "$LAST_JB_DATE" ]]; then
-                echo "Last Backup Generated: $LAST_JB_DATE"
-                echo "Backup Job Name: ${JOB_NAME:-Unknown}"
-            else
-                echo "Last Backup Generated: No backup history found"
-            fi
+def parse_jb5_info():
+    try:
+        # 1. Fetch Backup Jobs info
+        jobs_res = subprocess.check_output("jetbackup5api -F listBackupJobs", shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+        
+        job_name = None
+        last_run = None
+        
+        for line in jobs_res.splitlines():
+            line = line.strip()
+            if line.startswith("name:"):
+                val = line.split(":", 1)[1].strip().strip('"\'')
+                if val != "JetBackup Config" and not job_name:
+                    job_name = val
+            elif (line.startswith("last_run:") or line.startswith("last_execution:")) and not last_run:
+                val = line.split(":", 1)[1].strip().strip('"\'')
+                if val and val != "0" and val.lower() != "none":
+                    last_run = val
+
+        # Fallback to listBackups if last_run is empty
+        if not last_run:
+            backups_res = subprocess.check_output("jetbackup5api -F listBackups", shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+            for line in backups_res.splitlines():
+                if "created:" in line:
+                    val = line.split(":", 1)[1].strip().strip('"\'')
+                    if val:
+                        last_run = val
+                        break
+
+        # 2. Fetch Destination Hostname
+        dest_res = subprocess.check_output("jetbackup5api -F listDestinations", shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+        dest_host = None
+        
+        for line in dest_res.splitlines():
+            line = line.strip()
+            if line.startswith("host:") or line.startswith("hostname:") or line.startswith("server:"):
+                val = line.split(":", 1)[1].strip().strip('"\'')
+                if val:
+                    dest_host = val
+                    break
+
+        if last_run:
+            print(f"Last Backup Generated: {last_run}")
+        else:
+            print("Last Backup Generated: No completed backup recorded")
+
+        if job_name:
+            print(f"Backup Job Name: {job_name}")
+
+        if dest_host:
+            print(f"Destination Hostname: {dest_host}")
+
+    except Exception:
+        print("Last Backup Generated: Unable to fetch details")
+
+parse_jb5_info()
+EOF
         fi
     else
         echo "License: Invalid or Expired"
@@ -53,16 +96,15 @@ elif command -v jetbackup &> /dev/null; then
         echo "License: Valid"
         JB_VALID=true
         
-        # Query JetBackup 4 API for the latest backup entry
         if command -v jetbackupapi &> /dev/null; then
-            BACKUP_INFO=$(jetbackupapi -F listBackups -D "sort[created]=-1&limit=1" 2>/dev/null)
-            
-            LAST_JB_DATE=$(echo "$BACKUP_INFO" | grep -i '"created"' | head -n 1 | awk -F '"' '{print $4}')
-            JOB_NAME=$(echo "$BACKUP_INFO" | grep -i '"job_name"' | head -n 1 | awk -F '"' '{print $4}')
+            JOB_NAME=$(jetbackupapi -F listBackupJobs 2>/dev/null | grep -iE "^\s*name:" | head -n 1 | awk -F ': ' '{print $2}' | tr -d '"'\')
+            LAST_BACKUP_TIME=$(jetbackupapi -F listBackups 2>/dev/null | grep -iE "^\s*created:" | head -n 1 | awk -F ': ' '{print $2}' | tr -d '"'\')
+            DEST_HOST=$(jetbackupapi -F listDestinations 2>/dev/null | grep -iE "^\s*host:" | head -n 1 | awk -F ': ' '{print $2}' | tr -d '"'\')
 
-            if [[ -n "$LAST_JB_DATE" ]]; then
-                echo "Last Backup Generated: $LAST_JB_DATE"
-                echo "Backup Job Name: ${JOB_NAME:-Unknown}"
+            if [[ -n "$LAST_BACKUP_TIME" ]]; then
+                echo "Last Backup Generated: $LAST_BACKUP_TIME"
+                echo "Backup Job Name: ${JOB_NAME:-N/A}"
+                [[ -n "$DEST_HOST" ]] && echo "Destination Hostname: $DEST_HOST"
             else
                 echo "Last Backup Generated: No backup history found"
             fi
