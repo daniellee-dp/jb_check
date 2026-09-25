@@ -16,7 +16,8 @@ if command -v jetbackup5 &> /dev/null; then
     LICENSE_OUTPUT=$(jetbackup5 --license 2>&1)
     EXIT_CODE=$?
     
-    if [[ $EXIT_CODE -eq 0 ]] && echo "$LICENSE_OUTPUT" | grep -q "License is Valid"; then
+    # Check if the output explicitly contains "Active" or "Valid", and DOES NOT contain "Invalid" or "Cancelled"
+    if [[ $EXIT_CODE -eq 0 ]] && echo "$LICENSE_OUTPUT" | grep -qiE "License is (Active|Valid)" && ! echo "$LICENSE_OUTPUT" | grep -qiE "Invalid|Cancelled"; then
         echo "License: Valid"
         JB_VALID=true
     else
@@ -29,7 +30,7 @@ elif command -v jetbackup &> /dev/null; then
     LICENSE_OUTPUT=$(jetbackup --license 2>&1)
     EXIT_CODE=$?
     
-    if [[ $EXIT_CODE -eq 0 ]] && echo "$LICENSE_OUTPUT" | grep -qi "valid" && ! echo "$LICENSE_OUTPUT" | grep -qi "invalid"; then
+    if [[ $EXIT_CODE -eq 0 ]] && echo "$LICENSE_OUTPUT" | grep -qiE "License is (Active|Valid)" && ! echo "$LICENSE_OUTPUT" | grep -qiE "Invalid|Cancelled"; then
         echo "License: Valid"
         JB_VALID=true
     else
@@ -45,11 +46,9 @@ if [[ "$JB_VALID" = false ]]; then
     echo "-----------------------------------"
     echo "Checking Backuply status..."
     
-    # Check for Backuply CLI binary or installations directory
     if [[ -x "/usr/local/backuply/bin/backuply" ]] || [[ -d "/usr/local/backuply" ]]; then
         echo "Backuply Status: Installed"
         
-        # Check for backup logs/metadata in /var/backuply
         if [[ -d "/var/backuply/logs" ]]; then
             LAST_LOG=$(ls -t /var/backuply/logs/*.log 2>/dev/null | head -n 1)
             if [[ -n "$LAST_LOG" ]]; then
