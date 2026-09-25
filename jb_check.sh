@@ -125,6 +125,7 @@ if [[ "$JB_VALID" = false ]]; then
     if [[ -x "/usr/local/backuply/bin/backuply" ]] || [[ -d "/usr/local/backuply" ]]; then
         echo "Backuply Status: Installed"
         
+        # Determine last backup generation date
         if [[ -d "/var/backuply/logs" ]]; then
             LAST_LOG=$(ls -t /var/backuply/logs/*.log 2>/dev/null | head -n 1)
             if [[ -n "$LAST_LOG" ]]; then
@@ -144,6 +145,67 @@ if [[ "$JB_VALID" = false ]]; then
         else
             echo "Last Backup Generated: No backup history directory found in /var/backuply"
         fi
+
+        # Find and print Backuply destination host
+        python3 - << 'EOF' 2>/dev/null
+import os, json, sqlite3, glob
+
+def get_backuply_destination():
+    dest_host = None
+    
+    # 1. Search JSON/config files under /var/backuply/ and /usr/local/backuply/
+    config_files = glob.glob("/var/backuply/**/*.json", recursive=True) + \
+                   glob.glob("/usr/local/backuply/**/*.json", recursive=True) + \
+                   glob.glob("/var/backuply/data/*.php", recursive=True)
+
+    for cfg in config_files:
+        try:
+            with open(cfg, 'r', errors='ignore') as f:
+                content = f.read()
+                if "host" in content.lower() or "server" in content.lower() or "bucket" in content.lower():
+                    # Attempt JSON parse
+                    data = json.loads(content)
+                    if isinstance(data, dict):
+                        dest_host = data.get('host') or data.get('hostname') or data.get('server') or data.get('bucket')
+                        if dest_host:
+                            break
+        except Exception:
+            pass
+
+    # 2. Search SQLite databases under /var/backuply/ if present
+    if not dest_host:
+        db_files = glob.glob("/var/backuply/**/*.db", recursive=True) + \
+                   glob.glob("/var/backuply/**/*.sqlite", recursive=True)
+        for db in db_files:
+            try:
+                conn = sqlite3.connect(db)
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tables = [t[0] for t in cursor.fetchall()]
+                
+                for t in tables:
+                    if "dest" in t.lower() or "location" in t.lower() or "setting" in t.lower():
+                        cursor.execute(f"SELECT * FROM {t} LIMIT 10;")
+                        rows = cursor.fetchall()
+                        for row in rows:
+                            row_str = str(row)
+                            if "ftp" in row_str.lower() or "s3" in row_str.lower() or "ssh" in row_str.lower():
+                                dest_host = row_str
+                                break
+                conn.close()
+                if dest_host:
+                    break
+            except Exception:
+                pass
+
+    if dest_host:
+        print(f"Destination Hostname: {dest_host}")
+    else:
+        print("Destination Hostname: Local / Default Storage")
+
+get_backuply_destination()
+EOF
+
     else
         echo "Backuply Status: NOT installed"
     fi
